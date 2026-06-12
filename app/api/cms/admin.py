@@ -205,9 +205,9 @@ def update_user(uid: int, json: UpdateUserInfoSchema):
         manager.user_group_model.query.filter_by(user_id=user.id).delete(synchronize_session=False)
         # 根据传入分组ids 新增关联记录
         user_group_list = list()
-        # 如果没传分组数据，则将其设定为 guest 分组
+        # 如果没传分组数据，则将其设定为 guest 分组(按真实分组记录解析)
         if not group_ids:
-            group_ids = [manager.group_model.get(level=GroupLevelEnum.GUEST.value).id]
+            group_ids = [manager.group_model.get_guest_group_id()]
         for group_id in group_ids:
             user_group = manager.user_group_model()
             user_group.user_id = user.id
@@ -332,11 +332,11 @@ def delete_group(gid):
     exist = manager.group_model.get(id=gid)
     if not exist:
         raise NotFound("分组不存在，删除失败")
-    guest_group = manager.group_model.get(level=GroupLevelEnum.GUEST.value)
-    root_group = manager.group_model.get(level=GroupLevelEnum.ROOT.value)
-    if gid in (guest_group.id, root_group.id):
+    guest_group_id = manager.group_model.get_guest_group_id()
+    root_group_id = manager.group_model.get_root_group_id()
+    if gid in (guest_group_id, root_group_id):
         raise Forbidden("不可删除此分组")
-    if manager.user_model.select_page_by_group_id(gid, root_group.id):
+    if manager.user_model.select_page_by_group_id(gid, root_group_id):
         raise Forbidden("分组下存在用户，不可删除")
     with db.auto_commit():
         # 删除group id 对应的关联记录

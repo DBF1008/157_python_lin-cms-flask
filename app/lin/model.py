@@ -26,6 +26,28 @@ class Group(GroupInterface):
         count = result.scalar()
         return count
 
+    @classmethod
+    def get_by_level(cls, level: int) -> Optional["Group"]:
+        """按分组级别(GroupLevelEnum)解析唯一存在的内置分组记录。
+
+        ROOT / GUEST 这类内置分组的 level 是稳定标识，但其真实主键 id 由数据库
+        初始化(插入)顺序决定，二者并不一定相等。判断分组身份必须以真实记录为准，
+        不能把 level 的枚举值直接当作 group id 使用。
+        """
+        return cls.get(level=level)
+
+    @classmethod
+    def get_root_group_id(cls) -> Optional[int]:
+        """获取超级管理员(ROOT)分组的真实 id，不存在时返回 None。"""
+        group = cls.get_by_level(GroupLevelEnum.ROOT.value)
+        return group.id if group else None
+
+    @classmethod
+    def get_guest_group_id(cls) -> Optional[int]:
+        """获取游客(GUEST)分组的真实 id，不存在时返回 None。"""
+        group = cls.get_by_level(GroupLevelEnum.GUEST.value)
+        return group.id if group else None
+
 
 class GroupPermission(GroupPermissionInterface):
     pass
@@ -81,7 +103,13 @@ class User(UserInterface):
 
     @property
     def is_admin(self) -> bool:
-        return manager.user_group_model.get(user_id=self.id).group_id == GroupLevelEnum.ROOT.value
+        # Root/Guest 等内置分组的 level 是稳定标识，真实 id 取决于数据库初始化顺序，
+        # 因此必须按真实分组记录解析出 Root 分组 id，再判断用户是否归属其中，
+        # 不能直接用 level 的枚举值与 group_id 比较(否则初始化顺序一变就会误判)。
+        root_group_id = manager.group_model.get_root_group_id()
+        if root_group_id is None:
+            return False
+        return manager.user_group_model.get(user_id=self.id, group_id=root_group_id) is not None
 
     @property
     def is_active(self) -> bool:
