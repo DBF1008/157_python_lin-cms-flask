@@ -81,7 +81,9 @@ class User(UserInterface):
 
     @property
     def is_admin(self) -> bool:
-        return manager.user_group_model.get(user_id=self.id).group_id == GroupLevelEnum.ROOT.value
+        ug = manager.user_group_model.get(user_id=self.id)
+        group = manager.group_model.get(id=ug.group_id)
+        return group.level == GroupLevelEnum.ROOT.value
 
     @property
     def is_active(self) -> bool:

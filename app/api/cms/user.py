@@ -30,6 +30,7 @@ from app.lin import (
     DocResponse,
     Duplicated,
     Failed,
+    GroupLevelEnum,
     Log,
     Logger,
     NotFound,
@@ -78,9 +79,7 @@ def register(json: UserRegisterSchema):
         group_ids = json.group_ids
         # 如果没传分组数据，则将其设定为 guest 分组
         if len(group_ids) == 0:
-            from app.lin import GroupLevelEnum
-
-            group_ids = [GroupLevelEnum.GUEST.value]
+            group_ids = [manager.group_model.get(level=GroupLevelEnum.GUEST.value).id]
         for group_id in group_ids:
             user_group = manager.user_group_model()
             user_group.user_id = user.id
