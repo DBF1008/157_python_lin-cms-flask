@@ -18,6 +18,7 @@ from app.api.cms.schema.admin import (
     AdminUserPageSchema,
     AdminUserSchema,
     CreateGroupSchema,
+    DeleteGroupSchema,
     GroupBaseSchema,
     GroupIdWithPermissionIdListSchema,
     QueryPageWithGroupIdSchema,
@@ -323,11 +324,20 @@ def update_group(gid, json: GroupBaseSchema):
 @api.validate(
     tags=["管理员"],
     security=[AuthorizationBearerSecurity],
-    resp=DocResponse(NotFound("分组不存在，删除失败"), Forbidden("分组不可删除"), Success("删除分组成功")),
+    resp=DocResponse(
+        NotFound("分组不存在，删除失败"),
+        Forbidden("分组不可删除"),
+        ParameterError("迁移目标分组不存在"),
+        Success("删除分组成功"),
+    ),
 )
-def delete_group(gid):
+def delete_group(gid, query: DeleteGroupSchema):
     """
     删除一个分组
+
+    当分组下仍存在用户时，可通过 transfer_group_id 指定迁移目标分组
+    （Guest 或其他非 Root 分组），将受影响用户统一转移后再删除分组与权限关联；
+    不指定迁移目标且分组下仍存在用户时，保持原有保护语义，拒绝删除。
     """
     exist = manager.group_model.get(id=gid)
     if not exist:
@@ -336,12 +346,36 @@ def delete_group(gid):
     root_group = manager.group_model.get(level=GroupLevelEnum.ROOT.value)
     if gid in (guest_group.id, root_group.id):
         raise Forbidden("不可删除此分组")
-    if manager.user_model.select_page_by_group_id(gid, root_group.id):
-        raise Forbidden("分组下存在用户，不可删除")
+    # 该分组下受影响的用户（不含超级管理员分组用户）
+    affected_users = manager.user_model.select_page_by_group_id(gid, root_group.id)
+    transfer_group_id = query.transfer_group_id
+    if affected_users:
+        # 未指定迁移目标时，保留原有保护：分组下存在用户则不可删除
+        if transfer_group_id is None:
+            raise Forbidden("分组下存在用户，不可删除")
+        if transfer_group_id == gid:
+            raise ParameterError("迁移目标分组不能为待删除分组")
+        target_group = manager.group_model.get(id=transfer_group_id)
+        if not target_group:
+            raise ParameterError("迁移目标分组不存在")
+        # 保留 Root 保护语义：不可将用户迁移至超级管理员分组
+        if target_group.level == GroupLevelEnum.ROOT.value:
+            raise Forbidden("不可将用户迁移至超级管理员分组")
     with db.auto_commit():
-        # 删除group id 对应的关联记录
+        if affected_users:
+            # 将受影响用户统一迁移至目标分组，并清理源分组的用户关联
+            affected_user_ids = [user.id for user in affected_users]
+            manager.user_group_model.transfer_users_to_group(
+                from_group_id=gid,
+                to_group_id=transfer_group_id,
+                user_ids=affected_user_ids,
+            )
+        else:
+            # 无用户时清理可能残留的用户关联记录
+            manager.user_group_model.query.filter_by(group_id=gid).delete(synchronize_session=False)
+        # 删除分组对应的权限关联记录
         manager.group_permission_model.query.filter_by(group_id=gid).delete(synchronize_session=False)
-        # 删除group
+        # 软删除分组
         exist.delete()
     raise Success("删除分组成功")
 

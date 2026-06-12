@@ -67,6 +67,20 @@ class CreateGroupSchema(GroupBaseSchema):
         return value
 
 
+class DeleteGroupSchema(BaseModel):
+    transfer_group_id: Optional[int] = Field(
+        None,
+        description="迁移目标分组ID；分组下存在用户时，将受影响用户统一迁移至该分组（Guest 或其他非 Root 分组）后再删除",
+    )
+
+    @field_validator("transfer_group_id")
+    @classmethod
+    def check_transfer_group_id(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and value <= 0:
+            raise ParameterError("迁移目标分组ID必须大于0")
+        return value
+
+
 class GroupIdWithPermissionIdListSchema(BaseModel):
     group_id: int = Field(description="用户组ID")
     permission_ids: List[int] = Field(description="权限ID列表")
