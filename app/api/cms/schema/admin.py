@@ -77,3 +77,10 @@ class GroupIdWithPermissionIdListSchema(BaseModel):
         if any(permission_id <= 0 for permission_id in value):
             raise ParameterError("权限ID必须大于0")
         return value
+
+
+class DeleteGroupQuerySchema(BaseModel):
+    migrate_to_group_id: Optional[int] = Field(
+        None,
+        description="将分组下用户迁移到的目标分组ID。不传则保持原有行为（有用户时阻止删除）",
+    )

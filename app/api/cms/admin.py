@@ -18,6 +18,7 @@ from app.api.cms.schema.admin import (
     AdminUserPageSchema,
     AdminUserSchema,
     CreateGroupSchema,
+    DeleteGroupQuerySchema,
     GroupBaseSchema,
     GroupIdWithPermissionIdListSchema,
     QueryPageWithGroupIdSchema,
@@ -323,11 +324,19 @@ def update_group(gid, json: GroupBaseSchema):
 @api.validate(
     tags=["管理员"],
     security=[AuthorizationBearerSecurity],
-    resp=DocResponse(NotFound("分组不存在，删除失败"), Forbidden("分组不可删除"), Success("删除分组成功")),
+    resp=DocResponse(
+        NotFound("分组不存在，删除失败"),
+        Forbidden("分组不可删除"),
+        ParameterError("目标分组不可与待删除分组相同"),
+        Success("删除分组成功"),
+    ),
 )
-def delete_group(gid):
+def delete_group(gid, query: DeleteGroupQuerySchema):
     """
     删除一个分组
+
+    可通过 query 参数 migrate_to_group_id 指定将分组下用户迁移到的目标分组，
+    不传则保持原有行为（有用户时阻止删除）。
     """
     exist = manager.group_model.get(id=gid)
     if not exist:
@@ -336,8 +345,49 @@ def delete_group(gid):
     root_group = manager.group_model.get(level=GroupLevelEnum.ROOT.value)
     if gid in (guest_group.id, root_group.id):
         raise Forbidden("不可删除此分组")
-    if manager.user_model.select_page_by_group_id(gid, root_group.id):
-        raise Forbidden("分组下存在用户，不可删除")
+
+    users = manager.user_model.select_page_by_group_id(gid, root_group.id)
+    if users:
+        if query.migrate_to_group_id is None:
+            raise Forbidden("分组下存在用户，不可删除")
+        target_group_id = query.migrate_to_group_id
+        if target_group_id == root_group.id:
+            raise Forbidden("不可将用户迁移至超级管理员分组")
+        if target_group_id == gid:
+            raise ParameterError("目标分组不可与待删除分组相同")
+        target_group = manager.group_model.get(id=target_group_id)
+        if not target_group:
+            raise NotFound("目标分组不存在")
+
+        with db.auto_commit():
+            # 找出已在目标分组中的用户ID，避免重复插入
+            existing_user_ids = {
+                row[0]
+                for row in db.session.query(manager.user_group_model.user_id)
+                .filter(
+                    manager.user_group_model.group_id == target_group_id,
+                    manager.user_group_model.user_id.in_([u.id for u in users]),
+                )
+                .all()
+            }
+            # 为不在目标分组的用户批量创建关联
+            new_relations = []
+            for u in users:
+                if u.id not in existing_user_ids:
+                    ug = manager.user_group_model()
+                    ug.user_id = u.id
+                    ug.group_id = target_group_id
+                    new_relations.append(ug)
+            if new_relations:
+                db.session.add_all(new_relations)
+            # 删除原分组的所有用户关联
+            manager.user_group_model.query.filter_by(group_id=gid).delete(synchronize_session=False)
+            # 删除分组权限关联
+            manager.group_permission_model.query.filter_by(group_id=gid).delete(synchronize_session=False)
+            # 软删除分组
+            exist.delete()
+        raise Success("删除分组成功")
+
     with db.auto_commit():
         # 删除group id 对应的关联记录
         manager.group_permission_model.query.filter_by(group_id=gid).delete(synchronize_session=False)
