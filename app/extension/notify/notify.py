@@ -12,8 +12,10 @@ import re
 from datetime import datetime
 from functools import wraps
 
-from flask import Response, request
+from flask import request
 from flask_jwt_extended import get_current_user
+
+from app.lin.exception import APIException, ResponseValue, is_success_response
 
 from .sse import sser
 
@@ -50,14 +52,26 @@ class Notify(object):
     def __call__(self, func):
         @wraps(func)
         def wrap(*args, **kwargs):
-            response: Response = func(*args, **kwargs)
-            self.response = response
-            self.user = get_current_user()
-            self.message = self._parse_template()
-            self.push_message()
-            return response
+            try:
+                result = func(*args, **kwargs)
+            except APIException as e:
+                # 通过 raise Success/Created/... 结束的成功请求同样推送消息;
+                # 失败请求(如 Failed)原样抛出, 不推送。
+                if is_success_response(e):
+                    self._record(e)
+                raise
+            # 正常 return 结束: 仅成功才推送(return Failed(...) 等失败结果跳过)
+            if is_success_response(result):
+                self._record(result)
+            return result
 
         return wrap
+
+    def _record(self, result):
+        self.response = ResponseValue(result)
+        self.user = get_current_user()
+        self.message = self._parse_template()
+        self.push_message()
 
     def push_message(self):
         # status = '操作成功' if self.response.status_code in SUCCESS_STATUS else '操作失败'

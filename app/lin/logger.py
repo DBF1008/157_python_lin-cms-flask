@@ -12,11 +12,12 @@ import re
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, cast
 
-from flask import Response, request
+from flask import request
 from flask_jwt_extended import get_current_user
 from sqlalchemy import Column, Integer, String, func
 
 from .db import db
+from .exception import APIException, ResponseValue, is_success_response
 from .interface import InfoCrud
 from .manager import manager
 
@@ -112,31 +113,40 @@ class Logger(object):
         elif self.template is None:
             raise Exception("template must not be None!")
         self.message: str = ""
-        self.response: Optional[Response] = None
+        self.response: Optional[Any] = None
         self.user: Optional[Any] = None
 
     def __call__(self, func: F) -> F:
         @wraps(func)
         def wrap(*args: Any, **kwargs: Any) -> Any:
-            response: Response = func(*args, **kwargs)
-            self.response = response
-            self.user = get_current_user()
-            if not self.user:
-                raise Exception("Logger must be used in the login state")
-            self.message = self._parse_template()
-            self.write_log()
-            return response
+            try:
+                result = func(*args, **kwargs)
+            except APIException as e:
+                # 通过 raise Success/Created/... 结束的成功请求同样要记录;
+                # 失败请求(如 Failed)原样抛出, 由全局异常处理生成响应, 不记录日志。
+                if is_success_response(e):
+                    self._record(e)
+                raise
+            # 正常 return 结束: 仅成功才记录(return Failed(...) 等失败结果跳过)
+            if is_success_response(result):
+                self._record(result)
+            return result
 
         return cast(F, wrap)
+
+    def _record(self, result: Any) -> None:
+        self.response = ResponseValue(result)
+        self.user = get_current_user()
+        if not self.user:
+            raise Exception("Logger must be used in the login state")
+        self.message = self._parse_template()
+        self.write_log()
 
     def write_log(self) -> None:
         info = manager.find_info_by_ep(request.endpoint)
         permission = info.name if info is not None else ""
-        status_code = getattr(self.response, "status_code", None)
-        if status_code is None:
-            status_code = getattr(self.response, "code", None)
-        if status_code is None:
-            status_code = 0
+        # self.response 为 ResponseValue, status_code 已对 Response / APIException 归一化
+        status_code = self.response.status_code
         Log.create_log(
             message=self.message,
             user_id=self.user.id,

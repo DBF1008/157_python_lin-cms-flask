@@ -194,3 +194,64 @@ class RequestLimit(APIException):
     code = 401
     message = "Too Many Requests"
     message_code = 10140
+
+
+# 请求结果归一化工具
+# ~~~~~~~~~~~~~~~~~~
+# 行为日志(Logger)与消息推送(Notify)装饰器既要处理视图正常 return 的 Response,
+# 也要处理视图通过 ``raise Success`` / ``raise Failed`` 结束请求的情况。
+# 以下工具把两种结果“收口”为统一的成功判定与属性访问入口。
+
+# 视为“成功”的 HTTP 状态码区间 [200, 300)
+SUCCESS_CODE_RANGE = range(200, 300)
+
+
+def _raw_status_code(result):
+    """返回 result 自带的 HTTP 状态码, 若其本身不携带状态码则返回 None。
+
+    - ``APIException``(含 Success/Failed 等)使用其 ``code``;
+    - Flask ``Response`` 使用 ``status_code``;
+    - 其余原始返回值(dict / schema / model / None)两者皆无, 返回 None。
+    """
+    if isinstance(result, APIException):
+        return result.code
+    status_code = getattr(result, "status_code", None)
+    if status_code is None:
+        status_code = getattr(result, "code", None)
+    return status_code
+
+
+def get_response_status_code(result) -> int:
+    """取得请求结果的 HTTP 状态码, 无法判定时回退为 0(与历史行为一致)。"""
+    status_code = _raw_status_code(result)
+    return status_code if status_code is not None else 0
+
+
+def is_success_response(result) -> bool:
+    """判断请求结果是否成功: 仅成功结果才记录行为日志 / 推送消息。
+
+    失败结果(如 ``Failed``, 无论是 raise 还是 return)一律跳过; 既无 ``status_code``
+    也无 ``code`` 的原始返回值(视图直接返回数据)视为成功, 以保持“正常 return 一律
+    记录”的历史行为。
+    """
+    status_code = _raw_status_code(result)
+    if status_code is None:
+        return True
+    return status_code in SUCCESS_CODE_RANGE
+
+
+class ResponseValue:
+    """请求结果的统一视图, 供日志 / 推送的消息模板取值。
+
+    无论视图是 ``return`` 一个 Response 还是 ``raise`` 一个 APIException, 都对外暴露
+    稳定的 ``status_code``, 使 ``{response.status_code}`` 等模板变量不再丢失; 其余属性
+    (如 ``message``)代理到被包装对象, 缺失时返回 "" , 与模板解析中
+    ``getattr(..., prop, "")`` 的容错行为保持一致。
+    """
+
+    def __init__(self, result):
+        self._result = result
+        self.status_code = get_response_status_code(result)
+
+    def __getattr__(self, name):
+        return getattr(self._result, name, "")
