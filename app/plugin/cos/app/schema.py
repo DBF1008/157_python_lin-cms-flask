@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from pydantic import RootModel
 
@@ -10,6 +10,8 @@ class CosOutSchema(BaseModel):
     file_name: str
     file_key: str
     url: str
+    key: Optional[str] = None
+    size: Optional[int] = None
 
 
 class CosOutSchemaList(RootModel[List[CosOutSchema]]):

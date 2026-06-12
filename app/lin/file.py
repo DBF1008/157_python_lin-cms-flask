@@ -9,12 +9,69 @@ uploader 模块，使用策略模式实现的上传文件接口
 
 import hashlib
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from flask import current_app
 from werkzeug.datastructures import FileStorage
 
 from .exception import FileExtensionError, FileTooLarge, FileTooMany, ParameterError
+
+
+def generate_md5(data: bytes) -> str:
+    """计算字节内容的 md5，用于按内容判定重复文件。
+
+    本地 / COS / OSS 三条上传链路共用同一实现，保证重复文件复用判定一致。
+    """
+    md5_obj = hashlib.md5()
+    md5_obj.update(data)
+    return md5_obj.hexdigest()
+
+
+def normalize_extension(filename: str) -> str:
+    """得到统一为小写、带点的文件扩展名，如 ``IMG.PNG`` -> ``.png``。"""
+    return "." + filename.lower().split(".")[-1]
+
+
+def extension_allowed(filename: str, allowed_extensions: Optional[Iterable[str]]) -> bool:
+    """大小写不敏感地校验文件扩展名是否被允许。
+
+    :param filename: 原始文件名
+    :param allowed_extensions: 允许的扩展名集合（不带点），如 ``{"jpg", "png"}``
+    :return: 扩展名合法返回 True，否则 False（不含扩展名时也返回 False）
+    """
+    if "." not in filename:
+        return False
+    ext = filename.rsplit(".", 1)[1].lower()
+    allowed = {str(item).lower().lstrip(".") for item in (allowed_extensions or [])}
+    return ext in allowed
+
+
+def file_meta(
+    *,
+    id: int,
+    key: Optional[str],
+    url: str,
+    file_name: str,
+    file_key: str,
+    size: Optional[int],
+    **extra: Any,
+) -> Dict[str, Any]:
+    """构造三条上传链路统一返回的文件元数据契约。
+
+    统一字段：``id`` 记录主键、``key`` 表单字段名、``url`` 访问地址（各后端语义保留）、
+    ``file_name`` 原始文件名、``file_key`` 后端存储标识、``size`` 字节大小。
+    ``extra`` 用于保留某一链路的历史字段（如本地的 ``path``）。
+    """
+    meta: Dict[str, Any] = {
+        "id": id,
+        "key": key,
+        "url": url,
+        "file_name": file_name,
+        "file_key": file_key,
+        "size": size,
+    }
+    meta.update(extra)
+    return meta
 
 
 class Uploader(object):
@@ -62,14 +119,11 @@ class Uploader(object):
         :param filename: 原始文件名
         :return: string 文件的扩展名
         """
-        return "." + filename.lower().split(".")[-1]
+        return normalize_extension(filename)
 
     @staticmethod
     def _generate_md5(data: bytes) -> str:
-        md5_obj = hashlib.md5()
-        md5_obj.update(data)
-        ret = md5_obj.hexdigest()
-        return ret
+        return generate_md5(data)
 
     @staticmethod
     def _get_size(file_obj: FileStorage) -> int:

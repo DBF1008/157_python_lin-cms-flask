@@ -2,7 +2,7 @@ from flask import request
 from werkzeug.local import LocalProxy
 
 from app.api import AuthorizationBearerSecurity, api
-from app.lin import DocResponse, Failed, ParameterError, Redprint, db, lin_config, login_required
+from app.lin import DocResponse, Failed, ParameterError, Redprint, db, extension_allowed, file_meta, lin_config, login_required
 
 from .exception import ImageNotFound
 from .model import COS
@@ -33,7 +33,14 @@ def get_cos_image(_id):
         else:
             # 返回临时链接
             url = COS.get_presigned_url(client, bucket, cos.file_key)
-        return {"id": cos.id, "url": url, "file_name": cos.file_name, "file_key": cos.file_key}
+        return file_meta(
+            id=cos.id,
+            key=None,
+            url=url,
+            file_name=cos.file_name,
+            file_key=cos.file_key,
+            size=cos.file_size,
+        )
     raise ImageNotFound
 
 
@@ -49,7 +56,7 @@ def upload_one():
     if not image:
         raise ParameterError("没有找到图片")
     if image and allowed_file(image.filename):
-        return upload_image_and_create_cos(image.filename, image.read())
+        return upload_image_and_create_cos(image.filename, image.read(), key="image")
     return Failed("上传图片失败，请检查图片路径")
 
 
@@ -67,44 +74,58 @@ def upload_multiple():
         if not image:
             raise ParameterError("没接收到图片，请检查图片路径")
         if image and allowed_file(image.filename):
-            images.append(upload_image_and_create_cos(image.filename, image.read()))
+            images.append(upload_image_and_create_cos(image.filename, image.read(), key=item))
     return images
 
 
-def upload_image_and_create_cos(name: str, data: bytes) -> dict:
+def upload_image_and_create_cos(name: str, data: bytes, key=None) -> dict:
     bucket = lin_config.get_config("cos.bucket_name")
     file_md5 = COS.generate_md5(data)
-    exist = COS.get(file_name=name, file_md5=file_md5)
+    size = len(data)
+
+    def resolve_url(file_key, stored_url=None):
+        if lin_config.get_config("cos.need_return_url"):
+            # 返回永久链接
+            return stored_url if stored_url else COS.get_url(client, bucket, file_key)
+        # 返回临时链接
+        return COS.get_presigned_url(client, bucket, file_key)
+
+    # 按文件内容 md5 复用已有记录，与本地 / OSS 链路保持一致
+    exist = COS.get(file_md5=file_md5)
     if exist:
-        file_url = COS.get_presigned_url(client, bucket, exist.file_key)
-        res = {"id": exist.id, "url": file_url, "file_name": exist.file_name, "file_key": exist.file_key}
-        return res
+        return file_meta(
+            id=exist.id,
+            key=key,
+            url=resolve_url(exist.file_key, exist.url),
+            file_name=name,
+            file_key=exist.file_key,
+            size=exist.file_size if exist.file_size is not None else size,
+        )
 
     file_key = COS.generate_key(name)
     client.put_object(Bucket=bucket, Body=data, Key=file_key, StorageClass="STANDARD")
-    res = {"file_name": name, "file_key": file_key}
-    url = COS.get_url(client, bucket, file_key)
-    if lin_config.get_config("cos.need_return_url"):
-        # 返回永久链接
-        res["url"] = url
-    else:
-        # 返回临时链接
-        res["url"] = COS.get_presigned_url(client, bucket, file_key)
-    file_size = COS.get_size(client, bucket, file_key)
+    permanent_url = COS.get_url(client, bucket, file_key)
     with db.auto_commit():
         cos_data = {
             "file_name": name,
             "file_key": file_key,
             "file_md5": file_md5,
-            "file_size": file_size,
+            "file_size": size,
             "status": "UPLOADED",
             "commit": True,
         }
         if lin_config.get_config("cos.need_save_url"):
-            cos_data["url"] = url
+            cos_data["url"] = permanent_url
         one = COS.create(**cos_data)
-        res["id"] = one.id
-    return res
+        cos_id = one.id
+    return file_meta(
+        id=cos_id,
+        key=key,
+        url=resolve_url(file_key, permanent_url),
+        file_name=name,
+        file_key=file_key,
+        size=size,
+    )
 
 
 def get_cos_client():
@@ -137,6 +158,4 @@ def get_cos_client():
 
 
 def allowed_file(filename):
-    return "." in filename and (filename.rsplit(".", 1)[1]).lower() in lin_config.get_config(
-        "cos.allowed_extensions", []
-    )
+    return extension_allowed(filename, lin_config.get_config("cos.allowed_extensions", []))

@@ -1,8 +1,6 @@
-import hashlib
-
 from sqlalchemy import Column, Integer, String, text
 
-from app.lin import BaseCrud, lin_config
+from app.lin import BaseCrud, generate_md5, lin_config, normalize_extension
 
 
 class COS(BaseCrud):
@@ -35,10 +33,7 @@ class COS(BaseCrud):
 
     @staticmethod
     def generate_md5(data: bytes):
-        md5_obj = hashlib.md5()
-        md5_obj.update(data)
-        ret = md5_obj.hexdigest()
-        return ret
+        return generate_md5(data)
 
     @staticmethod
     def get_size(client, bucket, file_key) -> str:
@@ -88,4 +83,4 @@ class COS(BaseCrud):
         :param filename: 原始文件名
         :return: string 文件的扩展名
         """
-        return "." + filename.lower().split(".")[-1]
+        return normalize_extension(filename)

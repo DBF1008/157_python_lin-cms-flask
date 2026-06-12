@@ -28,7 +28,7 @@ from .exception import (
     UnAuthorization,
     Updated,
 )
-from .file import Uploader
+from .file import Uploader, extension_allowed, file_meta, generate_md5, normalize_extension
 from .form import Form
 from .interface import BaseCrud, InfoCrud
 from .jwt import admin_required, get_tokens, group_required, login_required
@@ -37,4 +37,4 @@ from .logger import Log, Logger
 from .manager import manager
 from .model import Group, GroupPermission, Permission, User, UserGroup, UserIdentity
 from .redprint import Redprint
-from .utils import permission_meta
+from .utils import get_random_str, permission_meta
