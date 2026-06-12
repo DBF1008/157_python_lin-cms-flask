@@ -15,11 +15,14 @@ from functools import wraps
 from flask import Response, request
 from flask_jwt_extended import get_current_user
 
+from app.lin.exception import APIException, Created, Deleted, Success, Updated
+
 from .sse import sser
 
 REG_XP = r"[{](.*?)[}]"
 OBJECTS = ["user", "response", "request"]
 SUCCESS_STATUS = [200, 201]
+SUCCESS_EXCEPTIONS = (Success, Created, Updated, Deleted)
 MESSAGE_EVENTS = set()
 
 
@@ -50,7 +53,16 @@ class Notify(object):
     def __call__(self, func):
         @wraps(func)
         def wrap(*args, **kwargs):
-            response: Response = func(*args, **kwargs)
+            try:
+                response = func(*args, **kwargs)
+            except APIException as e:
+                if isinstance(e, SUCCESS_EXCEPTIONS):
+                    self.response = e
+                    self.user = get_current_user()
+                    self.message = self._parse_template()
+                    self.push_message()
+                raise
+            # 正常 return 路径
             self.response = response
             self.user = get_current_user()
             self.message = self._parse_template()

@@ -17,6 +17,7 @@ from flask_jwt_extended import get_current_user
 from sqlalchemy import Column, Integer, String, func
 
 from .db import db
+from .exception import APIException, Created, Deleted, Success, Updated
 from .interface import InfoCrud
 from .manager import manager
 
@@ -96,6 +97,7 @@ class Log(InfoCrud):
 
 REG_XP = r"[{](.*?)[}]"
 OBJECTS = ["user", "response", "request"]
+SUCCESS_EXCEPTIONS = (Success, Created, Updated, Deleted)
 
 
 class Logger(object):
@@ -118,7 +120,20 @@ class Logger(object):
     def __call__(self, func: F) -> F:
         @wraps(func)
         def wrap(*args: Any, **kwargs: Any) -> Any:
-            response: Response = func(*args, **kwargs)
+            try:
+                response = func(*args, **kwargs)
+            except APIException as e:
+                # 仅拦截成功类异常（2xx），记录日志
+                if isinstance(e, SUCCESS_EXCEPTIONS):
+                    self.response = e
+                    self.user = get_current_user()
+                    if not self.user:
+                        raise Exception("Logger must be used in the login state")
+                    self.message = self._parse_template()
+                    self.write_log()
+                # 无论是否记录日志，都重新抛出，让全局异常处理器生成 HTTP 响应
+                raise
+            # 正常 return 路径（向后兼容）
             self.response = response
             self.user = get_current_user()
             if not self.user:

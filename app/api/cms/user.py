@@ -166,7 +166,7 @@ def change_password(json: ChangePasswordSchema):
         db.session.commit()
         raise Success("密码修改成功")
     else:
-        return Failed("修改密码失败")
+        raise Failed("修改密码失败")
 
 
 @user_api.route("/information")
