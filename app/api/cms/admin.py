@@ -170,7 +170,10 @@ def delete_user(uid):
     if groups[0].level == GroupLevelEnum.ROOT.value:
         raise Forbidden("无法删除此用户")
     with db.auto_commit():
+        # 清理用户与分组的关联记录
         manager.user_group_model.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        # 清理用户的身份认证记录，避免遗留孤儿数据
+        manager.identity_model.query.filter_by(user_id=uid).delete(synchronize_session=False)
         user.hard_delete()
     raise Success("操作成功")
 
