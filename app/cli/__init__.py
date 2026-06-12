@@ -32,11 +32,23 @@ def db_fake():
 
 
 @plugin_cli.command("init", with_appcontext=False)
-def plugin_init():
+@click.option(
+    "--safe",
+    is_flag=True,
+    help="可重复执行的安全模式：跳过已安装依赖、只补缺失/版本变更的默认配置并保留自定义项，输出每个插件的初始化报告。",
+)
+@click.option(
+    "-n",
+    "--name",
+    "names",
+    multiple=True,
+    help="要初始化的插件名，可重复指定（如 -n poem -n oss）；不传则交互式询问。",
+)
+def plugin_init(safe, names):
     """
     initialize plugin
     """
-    _plugin_init()
+    _plugin_init(names=list(names), safe=safe)
 
 
 @plugin_cli.command("generate", with_appcontext=False)
