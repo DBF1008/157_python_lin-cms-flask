@@ -171,6 +171,7 @@ def delete_user(uid):
         raise Forbidden("无法删除此用户")
     with db.auto_commit():
         manager.user_group_model.query.filter_by(user_id=uid).delete(synchronize_session=False)
+        manager.identity_model.query.filter_by(user_id=uid).delete(synchronize_session=False)
         user.hard_delete()
     raise Success("操作成功")
 
