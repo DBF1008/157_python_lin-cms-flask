@@ -32,11 +32,18 @@ def db_fake():
 
 
 @plugin_cli.command("init", with_appcontext=False)
-def plugin_init():
-    """
-    initialize plugin
-    """
-    _plugin_init()
+@click.argument("names", nargs=-1, required=False)
+@click.option("--safe", is_flag=True, help="安全模式：可重复执行，保留已有配置，跳过已满足的依赖")
+@click.option("--all", "use_all", is_flag=True, help="初始化所有插件（等同于输入 *）")
+def plugin_init(names, safe, use_all):
+    """initialize plugin(s)."""
+    if use_all:
+        plugin_name = "*"
+    elif names:
+        plugin_name = " ".join(names)
+    else:
+        plugin_name = None
+    _plugin_init(plugin_name, safe=safe)
 
 
 @plugin_cli.command("generate", with_appcontext=False)
