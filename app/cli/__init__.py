@@ -3,6 +3,7 @@ from flask.cli import AppGroup
 
 from .db import fake as _db_fake
 from .db import init as _db_init
+from .db import migrate_oss as _db_migrate_oss
 from .plugin import generate as _plugin_generate
 from .plugin import init as _plugin_init
 
@@ -29,6 +30,15 @@ def db_fake():
     """
     _db_fake()
     click.echo("fake数据添加成功")
+
+
+@db_cli.command("migrate_oss")
+def db_migrate_oss():
+    """
+    migrate the oss table: add columns for unified upload contract.
+    """
+    _db_migrate_oss()
+    click.echo("OSS 表迁移完成")
 
 
 @plugin_cli.command("init", with_appcontext=False)

@@ -33,7 +33,7 @@ def get_cos_image(_id):
         else:
             # 返回临时链接
             url = COS.get_presigned_url(client, bucket, cos.file_key)
-        return {"id": cos.id, "url": url, "file_name": cos.file_name, "file_key": cos.file_key}
+        return _build_cos_response(form_key=None, record=cos, url=url)
     raise ImageNotFound
 
 
@@ -49,7 +49,7 @@ def upload_one():
     if not image:
         raise ParameterError("没有找到图片")
     if image and allowed_file(image.filename):
-        return upload_image_and_create_cos(image.filename, image.read())
+        return upload_image_and_create_cos(image.name, image.filename, image.read())
     return Failed("上传图片失败，请检查图片路径")
 
 
@@ -67,30 +67,28 @@ def upload_multiple():
         if not image:
             raise ParameterError("没接收到图片，请检查图片路径")
         if image and allowed_file(image.filename):
-            images.append(upload_image_and_create_cos(image.filename, image.read()))
+            images.append(upload_image_and_create_cos(image.name, image.filename, image.read()))
     return images
 
 
-def upload_image_and_create_cos(name: str, data: bytes) -> dict:
+def upload_image_and_create_cos(form_key: str, name: str, data: bytes) -> dict:
     bucket = lin_config.get_config("cos.bucket_name")
     file_md5 = COS.generate_md5(data)
-    exist = COS.get(file_name=name, file_md5=file_md5)
+    # Dedup by MD5 only — same content always reuses existing record
+    exist = COS.get(file_md5=file_md5)
     if exist:
         file_url = COS.get_presigned_url(client, bucket, exist.file_key)
-        res = {"id": exist.id, "url": file_url, "file_name": exist.file_name, "file_key": exist.file_key}
-        return res
+        return _build_cos_response(form_key=form_key, record=exist, url=file_url)
 
     file_key = COS.generate_key(name)
     client.put_object(Bucket=bucket, Body=data, Key=file_key, StorageClass="STANDARD")
-    res = {"file_name": name, "file_key": file_key}
     url = COS.get_url(client, bucket, file_key)
     if lin_config.get_config("cos.need_return_url"):
-        # 返回永久链接
-        res["url"] = url
+        file_url = url
     else:
-        # 返回临时链接
-        res["url"] = COS.get_presigned_url(client, bucket, file_key)
+        file_url = COS.get_presigned_url(client, bucket, file_key)
     file_size = COS.get_size(client, bucket, file_key)
+    ext = "." + name.lower().rsplit(".", 1)[-1] if "." in name else ""
     with db.auto_commit():
         cos_data = {
             "file_name": name,
@@ -103,8 +101,27 @@ def upload_image_and_create_cos(name: str, data: bytes) -> dict:
         if lin_config.get_config("cos.need_save_url"):
             cos_data["url"] = url
         one = COS.create(**cos_data)
-        res["id"] = one.id
-    return res
+    return _build_cos_response(form_key=form_key, record=one, url=file_url)
+
+
+def _build_cos_response(form_key, record, url):
+    """Build a unified response dict with common fields + COS-specific extras."""
+    ext = "." + record.file_name.lower().rsplit(".", 1)[-1] if "." in (record.file_name or "") else ""
+    stored_name = record.file_key.rsplit("/", 1)[-1] if record.file_key else ""
+    return {
+        "key": form_key,
+        "id": record.id,
+        "name": stored_name,
+        "path": record.file_key,
+        "url": url,
+        "size": record.file_size,
+        "extension": ext,
+        "md5": record.file_md5,
+        "type": record.type,
+        # COS-specific backward compat fields
+        "file_name": record.file_name,
+        "file_key": record.file_key,
+    }
 
 
 def get_cos_client():

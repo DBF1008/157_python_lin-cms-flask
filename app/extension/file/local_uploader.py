@@ -25,12 +25,11 @@ class LocalUploader(Uploader):
             exists = File.select_by_md5(file_md5)
             if exists:
                 ret.append(
-                    {
-                        "key": single.name,
-                        "id": exists.id,
-                        "path": exists.path,
-                        "url": site_domain + os.path.join(current_app.static_url_path, exists.path),
-                    }
+                    self._build_response(
+                        key=single.name,
+                        record=exists,
+                        site_domain=site_domain,
+                    )
                 )
             else:
                 absolute_path, relative_path, real_name = self._get_store_path(single.filename)
@@ -45,11 +44,24 @@ class LocalUploader(Uploader):
                     commit=True,
                 )
                 ret.append(
-                    {
-                        "key": single.name,
-                        "id": file.id,
-                        "path": file.path,
-                        "url": site_domain + os.path.join(current_app.static_url_path, file.path),
-                    }
+                    self._build_response(
+                        key=single.name,
+                        record=file,
+                        site_domain=site_domain,
+                    )
                 )
         return ret
+
+    def _build_response(self, key, record, site_domain):
+        """Build a unified response dict with common fields."""
+        return {
+            "key": key,
+            "id": record.id,
+            "name": record.name,
+            "path": record.path,
+            "url": site_domain + os.path.join(current_app.static_url_path, record.path),
+            "size": record.size,
+            "extension": record.extension,
+            "md5": record.md5,
+            "type": record.type,
+        }
